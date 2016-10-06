@@ -9,8 +9,8 @@ import setuptools
 from setuptools.command.test import test as TestCommand
 from setuptools import setup
 
-if sys.version_info < (3, 4, 0):
-    sys.stderr.write('FATAL: AWS SAML Login needs to be run with Python 3.4+\n')
+if sys.version_info < (2, 7, 0):
+    sys.stderr.write('FATAL: AWS SAML Login needs to be run with Python 2.7+\n')
     sys.exit(1)
 
 __location__ = os.path.join(os.getcwd(), os.path.dirname(inspect.getfile(inspect.currentframe())))
@@ -46,6 +46,7 @@ CLASSIFIERS = [
     'License :: OSI Approved :: Apache Software License',
     'Operating System :: POSIX :: Linux',
     'Programming Language :: Python',
+    'Programming Language :: Python :: 2.7',
     'Programming Language :: Python :: 3.4',
     'Programming Language :: Python :: Implementation :: CPython',
 ]

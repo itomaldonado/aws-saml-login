@@ -3,7 +3,7 @@ import codecs
 from xml.etree import ElementTree
 from bs4 import BeautifulSoup
 import os
-import configparser
+import ConfigParser
 import requests
 
 
@@ -31,7 +31,7 @@ def get_boto3_session(key_id, secret, session_token=None, region=None, profile=N
 def write_aws_credentials(profile, key_id, secret, session_token=None):
     credentials_path = os.path.expanduser(AWS_CREDENTIALS_PATH)
     os.makedirs(os.path.dirname(credentials_path), exist_ok=True)
-    config = configparser.ConfigParser()
+    config = ConfigParser.ConfigParser()
     if os.path.exists(credentials_path):
         config.read(credentials_path)
 
@@ -47,7 +47,7 @@ def write_aws_credentials(profile, key_id, secret, session_token=None):
         config.write(fd)
 
 
-def get_saml_response(html: str):
+def get_saml_response(html):
     """
     Parse SAMLResponse from Shibboleth page
 
@@ -64,7 +64,7 @@ def get_saml_response(html: str):
         return xml
 
 
-def get_form_action(html: str):
+def get_form_action(html):
     '''
     >>> get_form_action('<body><form action="test"></form></body>')
     'test'
@@ -73,7 +73,7 @@ def get_form_action(html: str):
     return soup.find('form').get('action')
 
 
-def get_account_name(role_arn: str, account_names: dict):
+def get_account_name(role_arn, account_names):
     '''
     >>> get_account_name('arn:aws:iam::123:role/Admin', {'123': 'blub'})
     'blub'
@@ -85,7 +85,7 @@ def get_account_name(role_arn: str, account_names: dict):
         return account_names.get(number)
 
 
-def get_roles(saml_xml: str) -> list:
+def get_roles(saml_xml):
     """
     Extract SAML roles from SAML assertion XML
 
@@ -109,7 +109,7 @@ def get_roles(saml_xml: str) -> list:
     return roles
 
 
-def get_account_names(html: str) -> dict:
+def get_account_names(html):
     '''
     Parse account names from AWS page
 
@@ -150,6 +150,45 @@ class AssumeRoleFailed(Exception):
     def __str__(self):
         return 'Assuming role failed: {}'.format(self.msg)
 
+class GoogleSession:
+    """Creates a google session with the provided username and password...
+    HTTPS URL/connections should be used at all time so no one can see the session information...
+    
+    Does not support 2 Factor Authentication as of now.
+    """
+    # Authentication urls for google's services
+    LOGIN_URL = "https://accounts.google.com/ServiceLogin"
+    AUTH_URL = "https://accounts.google.com/ServiceLoginAuth"
+
+    def __init__(self, username, passwd):
+        """Initialize Google session, will authenticate with user credentials.
+        :param username: User's Google username (typically an email).
+        :param passwd: User's password.
+        """
+        self.session = requests.session()
+        login_html = self.session.get(self.LOGIN_URL)
+        soup_login = BeautifulSoup(login_html.content, 'html.parser').find('form').find_all('input')
+        payload = {}
+        for i in soup_login:
+            if i.has_attr('value'):
+                payload[i['name']] = i['value']
+        # Override the inputs with username and passwd:
+        payload['Email'] = username
+        payload['Passwd'] = passwd
+        resp = self.session.post(self.AUTH_URL, data=payload)
+    
+    def get(self, URL):
+        """Get the contents of a URL using the current Google session.
+        :param URL: Url to perform simple get from.
+        """
+        return self.session.get(URL)
+
+    def post(self, URL, data):
+        """Perform POST request to a URL using the current Google session.
+        :param URL: Url to perform post to.
+        :param data: dictionary with data payload.
+        """
+        return self.session.post(URL, data=data)
 
 def authenticate(url, user, password):
     '''Authenticate against the provided Shibboleth Identity Provider'''
@@ -175,6 +214,28 @@ def authenticate(url, user, password):
 
     return saml_xml, roles
 
+def authenticate_google(url, user, password):
+    '''Authenticate against the provided Shibboleth Identity Provider'''
+    """Authenticate againste the Google Identity Provider
+        :param url: Google's SAML url.
+        :param user: User's Google username (typically an email).
+        :param password: User's password.
+    """
+
+    # Get a google session
+    session = GoogleSession(username=user,passwd=password)
+    response = session.get(url)
+    saml_xml = get_saml_response(response.text)
+    if not saml_xml:
+        raise AuthenticationFailed()
+
+    url = get_form_action(response.text)
+    encoded_xml = codecs.encode(saml_xml.encode('utf-8'), 'base64')
+    response2 = session.post(url, data={'SAMLResponse': encoded_xml})
+    account_names = get_account_names(response2.text)
+    roles = get_roles(saml_xml)
+    roles = [(p_arn, r_arn, get_account_name(r_arn, account_names)) for p_arn, r_arn in roles]
+    return saml_xml, roles
 
 def assume_role(saml_xml, provider_arn, role_arn):
     saml_assertion = codecs.encode(saml_xml.encode('utf-8'), 'base64').decode('ascii').replace('\n', '')
